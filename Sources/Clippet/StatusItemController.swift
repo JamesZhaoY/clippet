@@ -5,11 +5,13 @@ final class StatusItemController: NSObject {
     private let statusItem: NSStatusItem
     private let store: ClipStore
     private let watcher: PasteboardWatcher
+    private let hotkeySpec: String
     private let togglePanel: () -> Void
 
-    init(store: ClipStore, watcher: PasteboardWatcher, togglePanel: @escaping () -> Void) {
+    init(store: ClipStore, watcher: PasteboardWatcher, hotkeySpec: String, togglePanel: @escaping () -> Void) {
         self.store = store
         self.watcher = watcher
+        self.hotkeySpec = hotkeySpec
         self.togglePanel = togglePanel
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
@@ -32,20 +34,53 @@ final class StatusItemController: NSObject {
     private func showMenu() {
         let menu = NSMenu()
 
-        let pause = NSMenuItem(title: "Pause Recording", action: #selector(togglePause), keyEquivalent: "")
+        let show = NSMenuItem(title: "Show Panel",
+                              action: #selector(showPanel),
+                              keyEquivalent: "")
+        show.target = self
+        if let (key, modifiers) = HotKey.menuEquivalent(for: hotkeySpec) {
+            show.keyEquivalent = key
+            show.keyEquivalentModifierMask = modifiers
+        }
+        menu.addItem(show)
+
+        let pause = NSMenuItem(title: "Pause Recording",
+                               action: #selector(togglePause),
+                               keyEquivalent: "")
         pause.target = self
         pause.state = watcher.isPaused ? .on : .off
         menu.addItem(pause)
 
-        let openConfig = NSMenuItem(title: "Open Config File", action: #selector(openConfigFile), keyEquivalent: "")
+        menu.addItem(.separator())
+
+        let openConfig = NSMenuItem(title: "Open Config File…",
+                                    action: #selector(openConfigFile),
+                                    keyEquivalent: ",")
         openConfig.target = self
         menu.addItem(openConfig)
 
-        let clear = NSMenuItem(title: "Clear History…", action: #selector(clearHistory), keyEquivalent: "")
+        let clear = NSMenuItem(title: "Clear History…",
+                               action: #selector(clearHistory),
+                               keyEquivalent: "")
         clear.target = self
         menu.addItem(clear)
 
         menu.addItem(.separator())
+
+        let shortcuts = NSMenuItem(title: "Keyboard Shortcuts",
+                                   action: #selector(showShortcuts),
+                                   keyEquivalent: "/")
+        shortcuts.target = self
+        menu.addItem(shortcuts)
+
+        let about = NSMenuItem(title: "About Clippet",
+                               action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                               keyEquivalent: "")
+        about.target = NSApp
+        menu.addItem(about)
+
+        menu.addItem(.separator())
+
         menu.addItem(NSMenuItem(title: "Quit Clippet",
                                 action: #selector(NSApplication.terminate(_:)),
                                 keyEquivalent: "q"))
@@ -57,12 +92,22 @@ final class StatusItemController: NSObject {
         statusItem.menu = nil
     }
 
+    // MARK: - Actions
+
+    @objc private func showPanel() {
+        togglePanel()
+    }
+
     @objc private func togglePause() {
         watcher.isPaused.toggle()
     }
 
     @objc private func openConfigFile() {
         NSWorkspace.shared.open(Config.fileURL)
+    }
+
+    @objc private func showShortcuts() {
+        showShortcutsAlert(hotkeySpec: hotkeySpec)
     }
 
     @objc private func clearHistory() {

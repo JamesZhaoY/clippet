@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watcher.onCapture = { [weak self] capture in self?.store.handle(capture) }
         watcher.start(intervalMs: config.pollIntervalMs)
 
-        statusItem = StatusItemController(store: store, watcher: watcher) { [weak self] in
+        statusItem = StatusItemController(store: store, watcher: watcher, hotkeySpec: config.hotkey) { [weak self] in
             self?.panel.toggle()
         }
 
@@ -85,7 +85,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = editMenu
         main.addItem(editMenuItem)
 
+        let helpMenuItem = NSMenuItem()
+        let helpMenu = NSMenu(title: "Help")
+        let shortcuts = NSMenuItem(title: "Keyboard Shortcuts",
+                                   action: #selector(showShortcutsSheet),
+                                   keyEquivalent: "/")
+        shortcuts.target = self
+        helpMenu.addItem(shortcuts)
+        helpMenuItem.submenu = helpMenu
+        main.addItem(helpMenuItem)
+
         NSApp.mainMenu = main
+    }
+
+    @objc private func showShortcutsSheet() {
+        showShortcutsAlert(hotkeySpec: config.hotkey)
     }
 
     /// One-time system prompt; afterwards the paste path shows its own alert on demand.
