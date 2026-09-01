@@ -27,6 +27,13 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN" "$MACOS/${APP_NAME}"
 chmod +x "$MACOS/${APP_NAME}"
 
+# Application icon (render from SVG if the .icns is missing)
+if [[ ! -f "$ROOT/Assets/Clippet.icns" ]]; then
+  echo "==> Clippet.icns not found, generating from SVG"
+  bash "$ROOT/Scripts/generate-icons.sh"
+fi
+cp "$ROOT/Assets/Clippet.icns" "$RESOURCES/Clippet.icns"
+
 cat > "$CONTENTS/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -40,6 +47,8 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <string>${APP_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
+  <key>CFBundleIconFile</key>
+  <string>Clippet</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
