@@ -17,25 +17,29 @@ final class HotKey {
         "n": 45, "m": 46, ".": 47, "space": 49, "`": 50,
     ]
 
-    /// Spec format: modifiers and one key joined by "+", e.g. "cmd+shift+v".
-    /// Modifiers: cmd/command, shift, opt/option/alt, ctrl/control.
-    init?(spec: String, callback: @escaping () -> Void) {
-        self.callback = callback
+    enum Failure: Error, CustomStringConvertible {
+        /// The spec could not be parsed into modifiers + one key.
+        case invalidSpec(String)
+        /// The system refused the combination. (A combo another app already holds usually
+        /// registers fine and simply never fires, so this is rare.)
+        case registrationFailed(String, OSStatus)
 
-        var modifiers: UInt32 = 0
-        var keyCode: UInt32?
-        for part in spec.lowercased().split(separator: "+").map({ $0.trimmingCharacters(in: .whitespaces) }) {
-            switch part {
-            case "cmd", "command": modifiers |= UInt32(cmdKey)
-            case "shift": modifiers |= UInt32(shiftKey)
-            case "opt", "option", "alt": modifiers |= UInt32(optionKey)
-            case "ctrl", "control": modifiers |= UInt32(controlKey)
-            default: keyCode = Self.keyCodes[part]
+        var description: String {
+            switch self {
+            case .invalidSpec(let spec):
+                return "'\(spec)' is not a valid hotkey (expected e.g. \"cmd+shift+v\")"
+            case .registrationFailed(let spec, let status):
+                return "\(HotKey.displaySymbols(for: spec)) could not be registered (status \(status))"
             }
         }
-        guard let keyCode, modifiers != 0 else {
-            NSLog("Clippet: invalid hotkey spec '\(spec)'")
-            return nil
+    }
+
+    /// Spec format: modifiers and one key joined by "+", e.g. "cmd+shift+v".
+    /// Modifiers: cmd/command, shift, opt/option/alt, ctrl/control.
+    init(spec: String, callback: @escaping () -> Void) throws {
+        self.callback = callback
+        guard let (keyCode, modifiers) = Self.parse(spec) else {
+            throw Failure.invalidSpec(spec)
         }
 
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
@@ -53,10 +57,28 @@ final class HotKey {
         let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
                                          GetApplicationEventTarget(), 0, &registered)
         guard status == noErr, registered != nil else {
-            NSLog("Clippet: RegisterEventHotKey failed with status \(status)")
-            return nil
+            throw Failure.registrationFailed(spec, status)
         }
         hotKeyRef = registered
+    }
+
+    /// Carbon key code + modifier mask for a spec, or nil when it has no key or no modifier.
+    static func parse(_ spec: String) -> (keyCode: UInt32, modifiers: UInt32)? {
+        var modifiers: UInt32 = 0
+        var keyCode: UInt32?
+        for part in parts(of: spec) {
+            switch part {
+            case "cmd", "command": modifiers |= UInt32(cmdKey)
+            case "shift": modifiers |= UInt32(shiftKey)
+            case "opt", "option", "alt": modifiers |= UInt32(optionKey)
+            case "ctrl", "control": modifiers |= UInt32(controlKey)
+            default:
+                guard keyCode == nil, let code = keyCodes[part] else { return nil }
+                keyCode = code
+            }
+        }
+        guard let keyCode, modifiers != 0 else { return nil }
+        return (keyCode, modifiers)
     }
 
     deinit {

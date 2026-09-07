@@ -25,23 +25,28 @@ func fileSize(_ path: String) -> Int {
     (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
 }
 
-/// A solid-colour PNG of the given size; `seed` varies the colour so images differ.
-func makePNG(width: Int, height: Int, seed: UInt8 = 0x40) -> Data {
+/// A gradient PNG of the given size; `seed` shifts the colours so images differ. `alpha`
+/// controls whether the image carries transparency.
+func makePNG(width: Int, height: Int, seed: UInt8 = 0x40, alpha: UInt8 = 255) -> Data {
     let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
                                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     let count = rep.bytesPerRow * height
     let base = rep.bitmapData!
     for i in 0..<count {
-        base[i] = i % 4 == 3 ? 255 : seed &+ UInt8(truncatingIfNeeded: i)
+        base[i] = i % 4 == 3 ? alpha : seed &+ UInt8(truncatingIfNeeded: i)
     }
     return rep.representation(using: .png, properties: [:])!
 }
 
-func textCapture(_ text: String, source: String? = "com.example.app") -> PasteboardCapture {
-    .text(text, source: source)
+func tiffData(fromPNG png: Data) -> Data {
+    NSBitmapImageRep(data: png)!.tiffRepresentation!
 }
 
-func imageCapture(_ png: Data, source: String? = "com.example.app") -> PasteboardCapture {
-    .image(rep: NSBitmapImageRep(data: png)!, png: png, source: source)
+func textCapture(_ text: String, source: String? = "com.example.app", at date: Date = Date()) -> PasteboardCapture {
+    .text(text, source: source, at: date)
+}
+
+func imageCapture(_ png: Data, source: String? = "com.example.app", at date: Date = Date()) -> PasteboardCapture {
+    .image(ImageCodec.process(png, maxBytes: .max)!, source: source, at: date)
 }

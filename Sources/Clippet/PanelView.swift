@@ -95,17 +95,18 @@ struct PanelView: View {
     private func itemList(selectedID: Int64?) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
+                let pinned = store.pinnedFiltered
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    if !store.pinnedFiltered.isEmpty {
+                    if !pinned.isEmpty {
                         sectionHeader("PINNED")
-                        ForEach(store.pinnedFiltered) { item in
-                            row(item, selected: item.id == selectedID)
+                        ForEach(Array(pinned.enumerated()), id: \.element.id) { index, item in
+                            row(item, selected: item.id == selectedID, position: index + 1)
                         }
                     }
                     if !store.recentFiltered.isEmpty {
                         sectionHeader("HISTORY")
-                        ForEach(store.recentFiltered) { item in
-                            row(item, selected: item.id == selectedID)
+                        ForEach(Array(store.recentFiltered.enumerated()), id: \.element.id) { index, item in
+                            row(item, selected: item.id == selectedID, position: pinned.count + index + 1)
                         }
                     }
                 }
@@ -127,7 +128,8 @@ struct PanelView: View {
             .padding(.bottom, 3)
     }
 
-    private func row(_ item: ClipItem, selected: Bool) -> some View {
+    /// `position` is the item's 1-based place in the flat list; the first nine double as ⌘1–⌘9.
+    private func row(_ item: ClipItem, selected: Bool, position: Int) -> some View {
         HStack(spacing: 9) {
             rowIcon(item, selected: selected)
                 .frame(width: 26, height: 20)
@@ -137,14 +139,27 @@ struct PanelView: View {
                 .font(.system(size: 12.5, weight: selected ? .medium : .regular))
                 .foregroundStyle(selected ? Color.white : Color.primary)
             Spacer(minLength: 4)
+            if item.lineCount > 1 {
+                Text("\(item.lineCount) lines")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(selected ? Color.white.opacity(0.75) : Color.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background((selected ? Color.white.opacity(0.18) : Color.primary.opacity(0.06)),
+                                in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+            }
             if item.pinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9))
                     .foregroundStyle(selected ? Color.white.opacity(0.9) : Color.orange)
             }
-            Text(shortRelativeTime(from: item.lastUsedAt))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(selected ? Color.white.opacity(0.85) : Color.secondary)
+            if store.commandHeld, position <= 9 {
+                keycap("⌘\(position)")
+            } else {
+                Text(shortRelativeTime(from: item.lastUsedAt))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(selected ? Color.white.opacity(0.85) : Color.secondary)
+            }
             Image(systemName: "chevron.left")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(selected ? Color.white.opacity(0.5) : Color.clear)
@@ -189,7 +204,7 @@ struct PanelView: View {
                     .foregroundStyle(selected ? Color.white : Color.secondary)
             }
         case .image:
-            if let data = item.thumbnail, let thumb = NSImage(data: data) {
+            if let thumb = ImageCache.shared.thumbnail(for: item) {
                 Image(nsImage: thumb)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -200,7 +215,7 @@ struct PanelView: View {
             }
         case .file:
             if let url = item.fileURLs.first {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                Image(nsImage: ImageCache.shared.fileIcon(path: url.path))
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
@@ -217,6 +232,7 @@ struct PanelView: View {
         HStack(spacing: 12) {
             hint("↩", "Paste")
             hint("⌘↩", "Copy")
+            hint("⌘1-9", "Quick")
             hint("⌘P", "Pin")
             hint("⌘⌫", "Delete")
             hint("esc", "Close")
@@ -256,6 +272,11 @@ struct PreviewPane: View {
     let item: ClipItem?
     @State private var fullImage: NSImage?
     @State private var thumbnail: NSImage?
+    @State private var imageLoad: Task<Void, Never>?
+
+    /// Characters of a text item shown in the preview; SwiftUI's Text lays out the whole
+    /// string, and a multi-megabyte log would freeze the panel.
+    static let previewCharacterLimit = 20_000
 
     var body: some View {
         Group {
@@ -317,11 +338,18 @@ struct PreviewPane: View {
         switch item.kind {
         case .text:
             ScrollView {
-                Text(item.text)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(String(item.text.prefix(Self.previewCharacterLimit)))
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                    if item.text.count > Self.previewCharacterLimit {
+                        Text("Preview shows the first \(Self.previewCharacterLimit.formatted()) of \(item.text.count.formatted()) characters; pasting inserts everything.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
             }
         case .image:
             Group {
@@ -341,10 +369,10 @@ struct PreviewPane: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(item.fileURLs, id: \.path) { url in
                         HStack(spacing: 6) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                            Image(nsImage: ImageCache.shared.fileIcon(path: url.path))
                                 .resizable()
                                 .frame(width: 15, height: 15)
-                                        Text(url.path)
+                            Text(url.path)
                                 .font(.system(size: 11))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -404,13 +432,23 @@ struct PreviewPane: View {
         }
     }
 
+    /// The thumbnail shows at once; the full image is read and decoded off the main thread
+    /// so arrowing across large screenshots stays smooth. A newer selection cancels the load.
     private func load() {
+        imageLoad?.cancel()
         fullImage = nil
         thumbnail = nil
         guard let item, item.kind == .image else { return }
-        thumbnail = item.thumbnail.flatMap { NSImage(data: $0) }
-        if let data = store.imageData(for: item) {
-            fullImage = NSImage(data: data)
+        thumbnail = ImageCache.shared.thumbnail(for: item)
+        guard let data = store.imageData(for: item) else { return }
+        let id = item.id
+        imageLoad = Task {
+            let decoded = await Task.detached(priority: .userInitiated) { () -> NSImage? in
+                guard !Task.isCancelled, let cgImage = ImageCodec.decode(data) else { return nil }
+                return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            }.value
+            guard !Task.isCancelled, self.item?.id == id, let decoded else { return }
+            fullImage = decoded
         }
     }
 }

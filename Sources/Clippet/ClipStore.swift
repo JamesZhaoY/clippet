@@ -17,6 +17,8 @@ final class ClipStore: ObservableObject {
     @Published var selectedID: Int64?
     /// Bumped by the panel controller on every show; PanelView watches it to grab search focus.
     @Published var focusToken = 0
+    /// True while ⌘ is down with the panel open; rows then show their ⌘1–⌘9 shortcut.
+    @Published var commandHeld = false
 
     /// Filtered views, recomputed only when `items` or `query` change — never per row render.
     private(set) var pinnedFiltered: [ClipItem] = []
@@ -71,13 +73,12 @@ final class ClipStore: ObservableObject {
     // MARK: - Capture
 
     func handle(_ capture: PasteboardCapture) {
-        let now = Date()
-        let thumb = capture.kind == .image ? capture.imageData.flatMap { makeThumbnail(png: $0) } : nil
+        let now = capture.capturedAt
         guard let result = db.upsert(kind: capture.kind,
                                      hash: capture.hash,
                                      text: capture.text,
                                      data: capture.kind == .image ? capture.imageData : nil,
-                                     thumb: thumb,
+                                     thumb: capture.thumbnail,
                                      imageWidth: capture.imageSize.width,
                                      imageHeight: capture.imageSize.height,
                                      appBundleID: capture.sourceBundleID,
@@ -88,24 +89,24 @@ final class ClipStore: ObservableObject {
         case .touched(let id):
             if let index = updated.firstIndex(where: { $0.id == id }) {
                 var moved = updated.remove(at: index)
-                moved.lastUsedAt = now
-                updated.insert(moved, at: 0)
+                moved.lastUsedAt = max(moved.lastUsedAt, now)
+                Self.insert(moved, into: &updated)
             } else {
                 // Memory drifted from disk (e.g. a second instance wrote to the same file).
                 updated = db.loadAll()
             }
         case .inserted(let id):
-            updated.insert(ClipItem(id: id,
-                                    kind: capture.kind,
-                                    hash: capture.hash,
-                                    text: capture.text,
-                                    pinned: false,
-                                    createdAt: now,
-                                    lastUsedAt: now,
-                                    appBundleID: capture.sourceBundleID,
-                                    thumbnail: thumb,
-                                    imageWidth: capture.imageSize.width,
-                                    imageHeight: capture.imageSize.height), at: 0)
+            Self.insert(ClipItem(id: id,
+                                 kind: capture.kind,
+                                 hash: capture.hash,
+                                 text: capture.text,
+                                 pinned: false,
+                                 createdAt: now,
+                                 lastUsedAt: now,
+                                 appBundleID: capture.sourceBundleID,
+                                 thumbnail: capture.thumbnail,
+                                 imageWidth: capture.imageSize.width,
+                                 imageHeight: capture.imageSize.height), into: &updated)
             let evicted = Set(db.evict(keeping: config.maxItems))
             if !evicted.isEmpty {
                 updated.removeAll { evicted.contains($0.id) }
@@ -113,6 +114,13 @@ final class ClipStore: ObservableObject {
         }
         items = updated
         if selectedID == nil { resetSelection() }
+    }
+
+    /// Keeps `items` ordered newest-first. Image captures arrive after background processing,
+    /// so a text copied in the meantime may already sit above them.
+    private static func insert(_ item: ClipItem, into list: inout [ClipItem]) {
+        let index = list.firstIndex { $0.lastUsedAt <= item.lastUsedAt } ?? list.endIndex
+        list.insert(item, at: index)
     }
 
     // MARK: - Item actions

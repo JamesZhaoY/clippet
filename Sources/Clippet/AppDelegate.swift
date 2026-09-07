@@ -11,9 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController!
     private var statusItem: StatusItemController!
     private var hotKey: HotKey?
+    /// The hotkey actually registered — the configured one, or the default after a fallback.
+    private var effectiveHotkey = Config.defaultHotkey
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        guard !yieldToRunningInstance() else { return }
 
         config = Config.load()
         db = openDatabase()
@@ -24,21 +27,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.onPaste = { [weak self] item in self?.deliver(item, simulatePaste: true) }
         panel.onCopyOnly = { [weak self] item in self?.deliver(item, simulatePaste: false) }
 
-        watcher = PasteboardWatcher(maxImageBytes: config.maxImageBytes)
+        watcher = PasteboardWatcher(maxImageBytes: config.maxImageBytes, maxTextBytes: config.maxTextBytes)
         watcher.onCapture = { [weak self] capture in self?.store.handle(capture) }
         watcher.start(intervalMs: config.pollIntervalMs)
 
-        statusItem = StatusItemController(store: store, watcher: watcher, hotkeySpec: config.hotkey) { [weak self] in
+        registerHotkey()
+        statusItem = StatusItemController(store: store, watcher: watcher, hotkeySpec: effectiveHotkey) { [weak self] in
             self?.panel.toggle()
-        }
-
-        hotKey = HotKey(spec: config.hotkey) { [weak self] in self?.panel.toggle() }
-        if hotKey == nil, config.hotkey != Config.defaultHotkey {
-            hotKey = HotKey(spec: Config.defaultHotkey) { [weak self] in self?.panel.toggle() }
         }
 
         buildMainMenu()
         showAccessibilityOnboardingIfNeeded()
+    }
+
+    /// A second copy would poll the same pasteboard and lose the hotkey race. Hand off to
+    /// the running one (it opens its panel) and quit — unless this run has its own data
+    /// directory, which is how a development build is meant to run alongside the install.
+    private func yieldToRunningInstance() -> Bool {
+        guard ProcessInfo.processInfo.environment["CLIPPET_DATA_DIR"] == nil,
+              let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        guard let other = others.first else { return false }
+        Log.app.notice("another instance is running (pid \(other.processIdentifier)); quitting")
+        if let url = other.bundleURL {
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        }
+        NSApp.terminate(nil)
+        return true
+    }
+
+    /// Registers the configured hotkey, falling back to the default. Either failure is
+    /// reported once: a silently missing hotkey looks exactly like a broken app.
+    private func registerHotkey() {
+        let toggle: () -> Void = { [weak self] in self?.panel.toggle() }
+        do {
+            hotKey = try HotKey(spec: config.hotkey, callback: toggle)
+            effectiveHotkey = config.hotkey
+            return
+        } catch {
+            Log.hotkey.error("\(String(describing: error), privacy: .public)")
+            var message = "\(error)."
+            if config.hotkey != Config.defaultHotkey {
+                do {
+                    hotKey = try HotKey(spec: Config.defaultHotkey, callback: toggle)
+                    effectiveHotkey = Config.defaultHotkey
+                    message += " Using \(HotKey.displaySymbols(for: Config.defaultHotkey)) instead."
+                } catch let fallbackError {
+                    Log.hotkey.error("\(String(describing: fallbackError), privacy: .public)")
+                    message += " The default \(HotKey.displaySymbols(for: Config.defaultHotkey)) failed too: \(fallbackError)."
+                }
+            }
+            if hotKey == nil {
+                message += " The panel is still available from the menu bar icon."
+            }
+            let alert = NSAlert()
+            alert.messageText = "Global hotkey problem"
+            alert.informativeText = message + "\n\nEdit \"hotkey\" in config.json and restart Clippet."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            NSApp.activate()
+            alert.runModal()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -61,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             return try Database(url: url)
         } catch {
-            NSLog("Clippet: \(error)")
+            Log.database.error("\(String(describing: error), privacy: .public)")
             let alert = NSAlert()
             alert.messageText = "Clippet can't open its history database"
             alert.informativeText = """
@@ -128,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showShortcutsSheet() {
-        showShortcutsAlert(hotkeySpec: config.hotkey)
+        showShortcutsAlert(hotkeySpec: effectiveHotkey)
     }
 
     /// One-time system prompt; afterwards the paste path shows its own alert on demand.

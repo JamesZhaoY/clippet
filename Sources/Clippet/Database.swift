@@ -169,8 +169,10 @@ final class Database {
         return .inserted(id: sqlite3_last_insert_rowid(db))
     }
 
+    /// Never moves an item backwards: an image finishing background processing carries the
+    /// timestamp of its copy, which may predate a later use of the same item.
     func touch(id: Int64, at date: Date) {
-        guard let stmt = prepare("UPDATE items SET last_used_at = ? WHERE id = ?;") else { return }
+        guard let stmt = prepare("UPDATE items SET last_used_at = MAX(last_used_at, ?) WHERE id = ?;") else { return }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, date.timeIntervalSince1970)
         sqlite3_bind_int64(stmt, 2, id)
@@ -254,7 +256,7 @@ final class Database {
     private func prepare(_ sql: String) -> OpaquePointer? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            NSLog("Clippet: cannot prepare statement: \(sql) — \(String(cString: sqlite3_errmsg(db)))")
+            Log.database.error("cannot prepare statement: \(sql, privacy: .public) — \(String(cString: sqlite3_errmsg(self.db)), privacy: .public)")
             return nil
         }
         return stmt
@@ -264,7 +266,7 @@ final class Database {
     private func run(_ stmt: OpaquePointer?) -> Bool {
         let status = sqlite3_step(stmt)
         guard status == SQLITE_DONE || status == SQLITE_ROW else {
-            NSLog("Clippet: statement failed (\(status)): \(String(cString: sqlite3_errmsg(db)))")
+            Log.database.error("statement failed (\(status)): \(String(cString: sqlite3_errmsg(self.db)), privacy: .public)")
             return false
         }
         return true
@@ -273,7 +275,7 @@ final class Database {
     private func exec(_ sql: String) {
         var error: UnsafeMutablePointer<CChar>?
         if sqlite3_exec(db, sql, nil, nil, &error) != SQLITE_OK, let error {
-            NSLog("Clippet: sqlite error: \(String(cString: error)) — \(sql)")
+            Log.database.error("sqlite error: \(String(cString: error), privacy: .public) — \(sql, privacy: .public)")
             sqlite3_free(error)
         }
     }

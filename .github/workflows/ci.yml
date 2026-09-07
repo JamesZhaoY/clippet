@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # package-app.sh derives the version from tags and commit count
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+      - name: Package (ad-hoc signed on CI)
+        run: bash Scripts/package-app.sh
+      - name: Verify bundle
+        run: |
+          plutil -lint .build/package/Clippet.app/Contents/Info.plist
+          codesign --verify --deep --strict .build/package/Clippet.app
+          test -f .build/package/Clippet.app/Contents/Resources/Clippet.icns

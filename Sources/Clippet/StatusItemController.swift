@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 @MainActor
 final class StatusItemController: NSObject {
@@ -7,6 +8,7 @@ final class StatusItemController: NSObject {
     private let watcher: PasteboardWatcher
     private let hotkeySpec: String
     private let togglePanel: () -> Void
+    private var pauseObserver: AnyCancellable?
 
     init(store: ClipStore, watcher: PasteboardWatcher, hotkeySpec: String, togglePanel: @escaping () -> Void) {
         self.store = store
@@ -16,11 +18,22 @@ final class StatusItemController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "paperclip", accessibilityDescription: "Clippet")
             button.target = self
             button.action = #selector(clicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        // The icon is the only always-visible place to show that recording is off.
+        pauseObserver = watcher.$isPaused.sink { [weak self] paused in
+            self?.updateIcon(paused: paused)
+        }
+    }
+
+    private func updateIcon(paused: Bool) {
+        guard let button = statusItem.button else { return }
+        button.image = NSImage(systemSymbolName: paused ? "paperclip.badge.ellipsis" : "paperclip",
+                               accessibilityDescription: paused ? "Clippet (recording paused)" : "Clippet")
+        button.appearsDisabled = paused
+        button.toolTip = paused ? "Clippet — recording paused" : "Clippet"
     }
 
     @objc private func clicked() {
@@ -44,11 +57,10 @@ final class StatusItemController: NSObject {
         }
         menu.addItem(show)
 
-        let pause = NSMenuItem(title: "Pause Recording",
+        let pause = NSMenuItem(title: watcher.isPaused ? "Resume Recording" : "Pause Recording",
                                action: #selector(togglePause),
                                keyEquivalent: "")
         pause.target = self
-        pause.state = watcher.isPaused ? .on : .off
         menu.addItem(pause)
 
         menu.addItem(.separator())

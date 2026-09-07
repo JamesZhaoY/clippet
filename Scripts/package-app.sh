@@ -7,6 +7,14 @@ cd "$ROOT"
 APP_NAME="Clippet"
 BUNDLE_ID="com.zhaozhanyang.Clippet"
 BUILD_DIR="$ROOT/.build"
+
+# Version: marketing version from the latest tag (v1.2.3 → 1.2.3, 0.1.0 when untagged),
+# build number from the commit count, so every build is identifiable in About.
+LATEST_TAG="$(git -C "$ROOT" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+SHORT_VERSION="${LATEST_TAG#v}"
+SHORT_VERSION="${SHORT_VERSION:-0.1.0}"
+BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+GIT_DESCRIBE="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 APP_DIR="$BUILD_DIR/package/${APP_NAME}.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -21,7 +29,7 @@ if [[ ! -x "$BIN" ]]; then
   exit 1
 fi
 
-echo "==> Assembling ${APP_NAME}.app"
+echo "==> Assembling ${APP_NAME}.app ${SHORT_VERSION} (${BUILD_NUMBER}, ${GIT_DESCRIBE})"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$BIN" "$MACOS/${APP_NAME}"
@@ -56,9 +64,11 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>${SHORT_VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>${BUILD_NUMBER}</string>
+  <key>ClippetGitDescribe</key>
+  <string>${GIT_DESCRIBE}</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>

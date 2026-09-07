@@ -16,7 +16,9 @@ Press **⇧⌘V**, type to search, hit **↩** — the item is pasted straight i
 - When one copy carries both text and a bitmap rendering of it (Numbers, Excel, Word…), the text is recorded — unless the text is just an image URL (browser "Copy Image"), then the image is
 - Items pasted from Clippet itself are not re-recorded as new copies
 - SQLite persistence in WAL mode with incremental vacuum (default cap: 500 items, images over 10 MB are not recorded)
-- Menu bar icon: left-click opens the panel; right-click → pause recording, open config, clear history, quit
+- Menu bar icon: left-click opens the panel; right-click → pause recording, open config, clear history, quit. The icon changes while recording is paused
+- Images are decoded, hashed and thumbnailed off the main thread; the preview shows the thumbnail instantly and loads the full image in the background
+- Only one copy runs at a time: launching Clippet again just opens the running instance's panel
 
 ## Build & Install
 
@@ -59,8 +61,11 @@ Everything else (recording history, searching, copy-only mode) works without it.
 | ⇧⌘V | Open / close the panel (global) |
 | type | Search (case-insensitive substring) |
 | ↑ ↓ | Select |
+| ⌘↑ ⌘↓, Home / End | First / last item |
+| Page ↑ / Page ↓ | Move eight items |
 | ↩ | Paste into the previous app |
 | ⌘↩ | Copy to clipboard only |
+| ⌘1 … ⌘9 | Paste the n-th listed item (hold ⌘ to see the numbers) |
 | ⌘P | Pin / unpin |
 | ⌘⌫ | Delete item |
 | esc | Clear search, then close |
@@ -74,10 +79,23 @@ Everything else (recording history, searching, copy-only mode) works without it.
 | `hotkey` | `"cmd+shift+v"` | Global hotkey, e.g. `"opt+cmd+v"` |
 | `maxItems` | `500` | History cap (1–100000); oldest unpinned items are evicted |
 | `maxImageBytes` | `10485760` | Images larger than this are not recorded; `0` disables image capture |
+| `maxTextBytes` | `1000000` | Text copies larger than this (UTF-8 bytes) are not recorded (1000–100000000) |
 | `pollIntervalMs` | `300` | Pasteboard polling interval (50–5000) |
 | `excludedApps` | `[]` | Reserved for v2, not enforced yet |
 
-Out-of-range values are clamped to the ranges above. The environment variable `CLIPPET_DATA_DIR` relocates both `config.json` and the database — handy for running a development build next to the installed one.
+Out-of-range values are clamped to the ranges above. If the configured hotkey cannot be registered (a typo, or a combination the system refuses), Clippet says so at launch and falls back to ⇧⌘V. A combination another app already owns usually registers fine but never fires — pick a different one in that case.
+
+The environment variable `CLIPPET_DATA_DIR` relocates both `config.json` and the database, and lets that copy run alongside the installed one — the way to try a development build without touching your history:
+
+```bash
+CLIPPET_DATA_DIR=/tmp/clippet-dev .build/package/Clippet.app/Contents/MacOS/Clippet
+```
+
+Diagnostics go to the unified log:
+
+```bash
+log stream --predicate 'subsystem == "com.zhaozhanyang.Clippet"' --level info
+```
 
 ## Privacy
 
@@ -98,10 +116,12 @@ Clippet 是一个自用优先、可随意魔改的 macOS 剪贴板历史工具:�
 
 **权限**:按 ↩ 直接粘贴依赖「辅助功能」权限(系统设置 → 隐私与安全性 → 辅助功能);不授权也能用,只是要自己 ⌘V。
 
-**日常使用**:⇧⌘V 唤出面板,输入即搜索,↑↓ 选择,↩ 粘贴到之前的应用,⌘↩ 仅复制,⌘P 固定常用条目,⌘⌫ 删除。菜单栏回形针图标:左键开面板,右键可暂停记录、打开配置文件、清空历史。
+**日常使用**:⇧⌘V 唤出面板,输入即搜索,↑↓ 选择(⌘↑/⌘↓ 跳到首尾,Page Up/Down 翻页),↩ 粘贴到之前的应用,⌘↩ 仅复制,⌘1–⌘9 直接粘贴列表前九项(按住 ⌘ 会显示序号),⌘P 固定常用条目,⌘⌫ 删除。菜单栏回形针图标:左键开面板,右键可暂停记录(暂停时图标会变)、打开配置文件、清空历史。
 
 配置在 `~/Library/Application Support/Clippet/config.json`,改完重启应用生效。
 
 ## License
 
 [MIT](LICENSE) © 2026 JamesZhao
+
+The paperclip in the app icon is the `attach_file` glyph from [Material Design Icons](https://github.com/google/material-design-icons) (Apache License 2.0).

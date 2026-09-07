@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 enum ClipKind: String {
     case text
@@ -21,6 +21,11 @@ struct ClipItem: Identifiable {
     var imageHeight: Int
     /// Lowercased `text`, computed once so filtering does not re-fold every item per keystroke.
     let searchKey: String
+    /// One-line label for the list, computed once: first non-empty line with runs of
+    /// whitespace collapsed, so indented code does not show as a blank row.
+    let listTitle: String
+    /// Number of lines in a text item (1 for anything else).
+    let lineCount: Int
 
     init(id: Int64, kind: ClipKind, hash: String, text: String, pinned: Bool,
          createdAt: Date, lastUsedAt: Date, appBundleID: String?,
@@ -37,6 +42,19 @@ struct ClipItem: Identifiable {
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
         self.searchKey = kind == .image ? "" : text.lowercased()
+        switch kind {
+        case .text:
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            listTitle = Self.collapseWhitespace(trimmed.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "")
+            lineCount = trimmed.utf8.lazy.filter { $0 == UInt8(ascii: "\n") }.count + 1
+        case .image:
+            listTitle = "Image \(imageWidth)×\(imageHeight)"
+            lineCount = 1
+        case .file:
+            listTitle = text.split(separator: "\n").map { URL(fileURLWithPath: String($0)).lastPathComponent }
+                .joined(separator: ", ")
+            lineCount = 1
+        }
     }
 
     var fileURLs: [URL] {
@@ -44,34 +62,7 @@ struct ClipItem: Identifiable {
         return text.split(separator: "\n").map { URL(fileURLWithPath: String($0)) }
     }
 
-    var listTitle: String {
-        switch kind {
-        case .text:
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
-        case .image:
-            return "Image \(imageWidth)×\(imageHeight)"
-        case .file:
-            return fileURLs.map(\.lastPathComponent).joined(separator: ", ")
-        }
+    private static func collapseWhitespace(_ line: String) -> String {
+        line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
-}
-
-/// Downscales PNG data to a JPEG thumbnail capped at `maxDimension` on the long edge.
-/// Returns the original data when it is already small enough.
-func makeThumbnail(png: Data, maxDimension: CGFloat = 512) -> Data? {
-    guard let source = NSImage(data: png) else { return nil }
-    let size = source.size
-    guard size.width > 0, size.height > 0 else { return nil }
-    let scale = min(1, maxDimension / max(size.width, size.height))
-    if scale >= 1 { return png }
-    let target = NSSize(width: max(1, floor(size.width * scale)),
-                        height: max(1, floor(size.height * scale)))
-    let scaled = NSImage(size: target, flipped: false) { rect in
-        source.draw(in: rect)
-        return true
-    }
-    guard let tiff = scaled.tiffRepresentation,
-          let rep = NSBitmapImageRep(data: tiff) else { return nil }
-    return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
 }

@@ -50,11 +50,51 @@ final class PasteEngine: NSObject {
             promptForAccessibility()
             return
         }
-        if let target = targetApp, !target.isActive {
-            target.activate(options: [])
+        cancelPendingPaste()
+        guard let target = targetApp, !target.isTerminated, !target.isActive else {
+            // The panel never activated Clippet, so the target is still the active app; it
+            // only needs a beat to get key focus back from the closing panel.
+            schedulePostCmdV(after: 0.12)
+            return
         }
-        // Give the target app a beat to regain key focus before ⌘V lands.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+        // Clippet itself was active (Dock click). Post ⌘V once the target has actually come
+        // to the front — heavy apps take far longer than any fixed delay — with a timeout so
+        // an activation that never reports still ends in a paste attempt.
+        let pid = target.processIdentifier
+        pendingActivation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.processIdentifier == pid else { return }
+            MainActor.assumeIsolated {
+                self?.cancelPendingPaste()
+                self?.schedulePostCmdV(after: 0.08)
+            }
+        }
+        let timeout = DispatchWorkItem { [weak self] in
+            Log.paste.warning("target app did not activate within 1 s, posting ⌘V anyway")
+            self?.cancelPendingPaste()
+            Self.postCmdV()
+        }
+        pendingTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: timeout)
+        target.activate(options: [])
+    }
+
+    private var pendingActivation: NSObjectProtocol?
+    private var pendingTimeout: DispatchWorkItem?
+
+    private func cancelPendingPaste() {
+        if let pendingActivation {
+            NSWorkspace.shared.notificationCenter.removeObserver(pendingActivation)
+        }
+        pendingActivation = nil
+        pendingTimeout?.cancel()
+        pendingTimeout = nil
+    }
+
+    private func schedulePostCmdV(after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             Self.postCmdV()
         }
     }

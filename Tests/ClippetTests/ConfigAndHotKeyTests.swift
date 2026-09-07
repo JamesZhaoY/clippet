@@ -9,18 +9,21 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.hotkey, Config.defaultHotkey)
         XCTAssertEqual(config.pollIntervalMs, 300)
         XCTAssertEqual(config.maxImageBytes, 10 * 1024 * 1024)
+        XCTAssertEqual(config.maxTextBytes, 1_000_000)
     }
 
     func testOutOfRangeValuesAreClamped() {
-        let low = Config(json: ["maxItems": 0, "pollIntervalMs": 1, "maxImageBytes": -5, "hotkey": ""])
+        let low = Config(json: ["maxItems": 0, "pollIntervalMs": 1, "maxImageBytes": -5, "maxTextBytes": 3, "hotkey": ""])
         XCTAssertEqual(low.maxItems, 1, "0 would disable eviction")
         XCTAssertEqual(low.pollIntervalMs, 50)
         XCTAssertEqual(low.maxImageBytes, 0)
+        XCTAssertEqual(low.maxTextBytes, 1_000)
         XCTAssertEqual(low.hotkey, Config.defaultHotkey)
 
-        let high = Config(json: ["maxItems": 10_000_000, "pollIntervalMs": 60_000])
+        let high = Config(json: ["maxItems": 10_000_000, "pollIntervalMs": 60_000, "maxTextBytes": 1 << 40])
         XCTAssertEqual(high.maxItems, 100_000)
         XCTAssertEqual(high.pollIntervalMs, 5_000)
+        XCTAssertEqual(high.maxTextBytes, 100_000_000)
     }
 
     func testWrongTypesAreIgnored() {

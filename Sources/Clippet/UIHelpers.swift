@@ -34,6 +34,41 @@ final class AppInfoCache {
     }
 }
 
+/// Decoded thumbnails and file icons, so scrolling does not re-decode JPEGs or hit the
+/// disk for icons on every row render. Bounded by NSCache; entries are keyed by item id
+/// (never reused) or file path.
+@MainActor
+final class ImageCache {
+    static let shared = ImageCache()
+
+    private let thumbnails: NSCache<NSNumber, NSImage> = {
+        let cache = NSCache<NSNumber, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
+    private let fileIcons: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 300
+        return cache
+    }()
+
+    func thumbnail(for item: ClipItem) -> NSImage? {
+        let key = NSNumber(value: item.id)
+        if let cached = thumbnails.object(forKey: key) { return cached }
+        guard let data = item.thumbnail, let image = NSImage(data: data) else { return nil }
+        thumbnails.setObject(image, forKey: key)
+        return image
+    }
+
+    func fileIcon(path: String) -> NSImage {
+        let key = path as NSString
+        if let cached = fileIcons.object(forKey: key) { return cached }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        fileIcons.setObject(icon, forKey: key)
+        return icon
+    }
+}
+
 /// Compact relative time for list rows: "now", "5m", "3h", "2d", then "8/26".
 func shortRelativeTime(from date: Date, to now: Date = Date()) -> String {
     let seconds = max(0, Int(now.timeIntervalSince(date)))
@@ -57,8 +92,11 @@ func showShortcutsAlert(hotkeySpec: String) {
     Panel
       Type          Search history
       ↑ ↓           Select item
+      ⌘↑ ⌘↓         First / last item
+      Page ↑ ↓      Move 8 items
       ↩             Paste into previous app
       ⌘↩            Copy to clipboard only
+      ⌘1 … ⌘9       Paste the n-th listed item
       ⌘P            Pin / unpin
       ⌘⌫            Delete item
       Esc           Clear search, then close

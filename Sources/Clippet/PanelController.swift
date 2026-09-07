@@ -20,6 +20,10 @@ final class PanelController: NSObject, NSWindowDelegate {
     private let store: ClipStore
     private let panel: ClippetPanel
     private var keyMonitor: Any?
+    private var flagsMonitor: Any?
+
+    /// Rows moved by Page Up / Page Down.
+    private static let pageSize = 8
 
     init(store: ClipStore) {
         self.store = store
@@ -64,6 +68,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         ))
         store.query = ""
         store.resetSelection()
+        store.commandHeld = NSEvent.modifierFlags.contains(.command)
         store.focusToken += 1
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
@@ -71,6 +76,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func hide() {
         removeKeyMonitor()
+        store.commandHeld = false
         panel.orderOut(nil)
     }
 
@@ -98,16 +104,23 @@ final class PanelController: NSObject, NSWindowDelegate {
             guard let self, self.panel.isVisible else { return event }
             return self.handle(event) ? nil : event
         }
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            self?.store.commandHeld = event.modifierFlags.contains(.command)
+            return event
+        }
     }
 
     private func removeKeyMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
         keyMonitor = nil
+        flagsMonitor = nil
     }
 
     /// Returns true when the event was consumed.
     private func handle(_ event: NSEvent) -> Bool {
         let cmd = event.modifierFlags.contains(.command)
+        let count = store.visibleItems.count
         switch event.keyCode {
         case 53: // esc — clear the query first, close on the second press
             if store.query.isEmpty {
@@ -116,11 +129,23 @@ final class PanelController: NSObject, NSWindowDelegate {
                 store.query = ""
             }
             return true
-        case 126: // up
-            store.moveSelection(by: -1)
+        case 126: // up (⌘↑ jumps to the first item)
+            store.moveSelection(by: cmd ? -count : -1)
             return true
-        case 125: // down
-            store.moveSelection(by: 1)
+        case 125: // down (⌘↓ jumps to the last item)
+            store.moveSelection(by: cmd ? count : 1)
+            return true
+        case 116: // page up
+            store.moveSelection(by: -Self.pageSize)
+            return true
+        case 121: // page down
+            store.moveSelection(by: Self.pageSize)
+            return true
+        case 115: // home
+            store.moveSelection(by: -count)
+            return true
+        case 119: // end
+            store.moveSelection(by: count)
             return true
         case 36, 76: // return / keypad enter
             if let item = store.selectedItem {
@@ -131,8 +156,14 @@ final class PanelController: NSObject, NSWindowDelegate {
             if let item = store.selectedItem { store.delete(item) }
             return true
         default:
-            if cmd, event.charactersIgnoringModifiers?.lowercased() == "p" {
+            guard cmd, let chars = event.charactersIgnoringModifiers?.lowercased() else { return false }
+            if chars == "p" {
                 if let item = store.selectedItem { store.togglePin(item) }
+                return true
+            }
+            // ⌘1–⌘9 paste the n-th visible item straight away.
+            if let digit = Int(chars), (1...9).contains(digit) {
+                if digit <= count { paste(store.visibleItems[digit - 1]) }
                 return true
             }
             return false

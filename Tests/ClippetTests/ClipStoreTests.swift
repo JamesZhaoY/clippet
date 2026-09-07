@@ -101,6 +101,25 @@ final class ClipStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLateImageCaptureIsPlacedByItsCopyTimeNotArrival() {
+        let store = makeStore()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        store.handle(textCapture("first", at: t0))
+        store.handle(textCapture("typed while the screenshot was processing", at: t0 + 2))
+        // The screenshot was copied between the two texts but finishes processing last.
+        store.handle(imageCapture(makePNG(width: 8, height: 8), at: t0 + 1))
+
+        XCTAssertEqual(store.items.map(\.kind), [.text, .image, .text])
+        assertMatchesDisk(store)
+
+        // Re-copying an item never moves it backwards in time.
+        store.handle(textCapture("first", at: t0 - 100))
+        XCTAssertEqual(store.items.last?.text, "first")
+        XCTAssertEqual(store.items.last?.lastUsedAt, t0)
+        assertMatchesDisk(store)
+    }
+
+    @MainActor
     func testImageIdentityIgnoresEncodingDifferences() {
         let store = makeStore()
         let original = makePNG(width: 32, height: 16)

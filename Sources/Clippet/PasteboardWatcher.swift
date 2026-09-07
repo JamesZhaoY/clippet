@@ -15,60 +15,59 @@ struct PasteboardCapture {
     /// Normalized PNG for images, nil otherwise.
     let imageData: Data?
     let imageSize: (width: Int, height: Int)
+    let thumbnail: Data?
     let sourceBundleID: String?
+    /// When the change was noticed. Image captures finish processing later and must still
+    /// take their place in history by the moment they were copied.
+    let capturedAt: Date
 
-    static func text(_ string: String, source: String?) -> PasteboardCapture {
+    static func text(_ string: String, source: String?, at date: Date = Date()) -> PasteboardCapture {
         PasteboardCapture(kind: .text, hash: contentHash(kind: .text, text: string), text: string,
-                          imageData: nil, imageSize: (0, 0), sourceBundleID: source)
+                          imageData: nil, imageSize: (0, 0), thumbnail: nil,
+                          sourceBundleID: source, capturedAt: date)
     }
 
-    static func files(_ urls: [URL], source: String?) -> PasteboardCapture {
+    static func files(_ urls: [URL], source: String?, at date: Date = Date()) -> PasteboardCapture {
         let text = urls.map(\.path).joined(separator: "\n")
         return PasteboardCapture(kind: .file, hash: contentHash(kind: .file, text: text), text: text,
-                                 imageData: nil, imageSize: (0, 0), sourceBundleID: source)
+                                 imageData: nil, imageSize: (0, 0), thumbnail: nil,
+                                 sourceBundleID: source, capturedAt: date)
     }
 
-    /// Images are identified by their decoded pixels, not by the encoded file: PNG encoding
-    /// is not byte-stable across passes, so hashing the bytes would make the same picture
-    /// look new every time it is re-encoded.
-    static func image(rep: NSBitmapImageRep, png: Data, source: String?) -> PasteboardCapture {
-        PasteboardCapture(kind: .image, hash: pixelHash(rep) ?? sha256(png), text: "",
-                          imageData: png, imageSize: (rep.pixelsWide, rep.pixelsHigh),
-                          sourceBundleID: source)
+    static func image(_ processed: ImageCodec.Processed, source: String?, at date: Date = Date()) -> PasteboardCapture {
+        PasteboardCapture(kind: .image, hash: processed.hash, text: "",
+                          imageData: processed.png, imageSize: (processed.width, processed.height),
+                          thumbnail: processed.thumbnail, sourceBundleID: source, capturedAt: date)
     }
 
     static func contentHash(kind: ClipKind, text: String) -> String {
-        sha256(Data("\(kind.rawValue):\(text)".utf8))
+        SHA256.hash(data: Data("\(kind.rawValue):\(text)".utf8)).map { String(format: "%02x", $0) }.joined()
     }
+}
 
-    static func pixelHash(_ rep: NSBitmapImageRep) -> String? {
-        guard !rep.isPlanar, let base = rep.bitmapData else { return nil }
-        var hasher = SHA256()
-        hasher.update(bufferPointer: UnsafeRawBufferPointer(start: base, count: rep.bytesPerRow * rep.pixelsHigh))
-        hasher.update(data: Data("\(rep.pixelsWide)x\(rep.pixelsHigh)/\(rep.bitsPerPixel)".utf8))
-        return hex(hasher.finalize())
-    }
-
-    private static func sha256(_ data: Data) -> String {
-        hex(SHA256.hash(data: data))
-    }
-
-    private static func hex<D: Sequence>(_ digest: D) -> String where D.Element == UInt8 {
-        digest.map { String(format: "%02x", $0) }.joined()
+/// Runs the decode → PNG → hash → thumbnail chain for one image at a time, off the main
+/// thread. Being an actor, a burst of copies queues up instead of fanning out across cores.
+actor ImageProcessor {
+    func process(_ raw: Data, maxBytes: Int) -> ImageCodec.Processed? {
+        ImageCodec.process(raw, maxBytes: maxBytes)
     }
 }
 
 @MainActor
-final class PasteboardWatcher: NSObject {
+final class PasteboardWatcher: NSObject, ObservableObject {
     var onCapture: ((PasteboardCapture) -> Void)?
     /// While paused, copies are ignored; the change counter keeps tracking so nothing copied
     /// during the pause is recorded retroactively on resume.
-    var isPaused = false
+    @Published var isPaused = false
+    /// The most recent image still being processed; tests await it.
+    private(set) var pendingImageWork: Task<Void, Never>?
 
     private let pasteboard: NSPasteboard
     private var lastChangeCount: Int
     private var timer: Timer?
     private let maxImageBytes: Int
+    private let maxTextBytes: Int
+    private let processor = ImageProcessor()
 
     private static let skippedTypes: [NSPasteboard.PasteboardType] = [
         NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"),
@@ -76,9 +75,10 @@ final class PasteboardWatcher: NSObject {
         .clippetOrigin,
     ]
 
-    init(pasteboard: NSPasteboard = .general, maxImageBytes: Int) {
+    init(pasteboard: NSPasteboard = .general, maxImageBytes: Int, maxTextBytes: Int) {
         self.pasteboard = pasteboard
         self.maxImageBytes = maxImageBytes
+        self.maxTextBytes = maxTextBytes
         lastChangeCount = pasteboard.changeCount
         super.init()
     }
@@ -106,41 +106,66 @@ final class PasteboardWatcher: NSObject {
         guard !types.contains(where: { Self.skippedTypes.contains($0) }) else { return }
 
         let source = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let capturedAt = Date()
 
         // File copies also carry an icon image and the file name as text, so files go first.
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self],
                                              options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
-            onCapture?(.files(urls, source: source))
+            onCapture?(.files(urls, source: source, at: capturedAt))
             return
         }
 
-        let string = pasteboard.string(forType: .string)
-            .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        let text = usableText()
         let hasImage = types.contains(.png) || types.contains(.tiff)
 
         // Spreadsheets and word processors put a bitmap rendering next to the copied text; the
         // text is what the user meant. The exception is "Copy Image" in browsers, which ships
         // the image's URL as plain text — a lone URL next to an image means the image.
-        if let string, !(hasImage && Self.isSingleURL(string)) {
-            onCapture?(.text(string, source: source))
+        if let text, !(hasImage && Self.isSingleURL(text)) {
+            onCapture?(.text(text, source: source, at: capturedAt))
             return
         }
-        if hasImage, let capture = imageCapture(source: source) {
-            onCapture?(capture)
+        if hasImage, let raw = imageData() {
+            // Decoding, re-encoding, hashing and thumbnailing run off the main thread; an
+            // image that turns out too large falls back to the URL text, if any.
+            pendingImageWork = Task { [processor, maxImageBytes] in
+                if let processed = await processor.process(raw, maxBytes: maxImageBytes) {
+                    onCapture?(.image(processed, source: source, at: capturedAt))
+                } else if let text {
+                    onCapture?(.text(text, source: source, at: capturedAt))
+                } else {
+                    Log.pasteboard.info("image of \(raw.count) raw bytes skipped (undecodable or over maxImageBytes)")
+                }
+            }
             return
         }
-        if let string {
-            onCapture?(.text(string, source: source))
+        if let text {
+            onCapture?(.text(text, source: source, at: capturedAt))
         }
     }
 
-    private func imageCapture(source: String?) -> PasteboardCapture? {
-        guard let raw = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff),
-              let rep = NSBitmapImageRep(data: raw),
-              let png = rep.representation(using: .png, properties: [:]),
-              png.count <= maxImageBytes else { return nil }
-        return .image(rep: rep, png: png, source: source)
+    private func usableText() -> String? {
+        guard let string = pasteboard.string(forType: .string),
+              !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let bytes = string.utf8.count
+        guard bytes <= maxTextBytes else {
+            Log.pasteboard.info("text copy of \(bytes) bytes exceeds maxTextBytes, skipped")
+            return nil
+        }
+        return string
+    }
+
+    /// Raw PNG/TIFF bytes, or nil when images are disabled or the payload is absurdly large
+    /// for the configured limit (a TIFF of that size cannot compress below it).
+    private func imageData() -> Data? {
+        guard maxImageBytes > 0,
+              let raw = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return nil }
+        guard raw.count <= 32 * maxImageBytes else {
+            Log.pasteboard.info("image of \(raw.count) raw bytes skipped before decoding")
+            return nil
+        }
+        return raw
     }
 
     nonisolated static func isSingleURL(_ string: String) -> Bool {

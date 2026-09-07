@@ -4,6 +4,9 @@ struct Config {
     var hotkey = Config.defaultHotkey
     var maxItems = 500
     var maxImageBytes = 10 * 1024 * 1024
+    /// Text copies above this many UTF-8 bytes are not recorded: a pasted log file would
+    /// otherwise be hashed, searched and laid out in full on every keystroke.
+    var maxTextBytes = 1_000_000
     var pollIntervalMs = 300
     /// Reserved for v2; not enforced yet.
     var excludedApps: [String] = []
@@ -33,7 +36,7 @@ struct Config {
             return config
         }
         guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            NSLog("Clippet: config.json is not valid JSON, using defaults")
+            Log.app.error("config.json is not valid JSON, using defaults")
             return Config()
         }
         return Config(json: json)
@@ -46,6 +49,7 @@ struct Config {
         if let value = json["hotkey"] as? String, !value.isEmpty { hotkey = value }
         if let value = json["maxItems"] as? Int { maxItems = value.clamped(to: 1...100_000) }
         if let value = json["maxImageBytes"] as? Int { maxImageBytes = max(0, value) }
+        if let value = json["maxTextBytes"] as? Int { maxTextBytes = value.clamped(to: 1_000...100_000_000) }
         if let value = json["pollIntervalMs"] as? Int { pollIntervalMs = value.clamped(to: 50...5_000) }
         if let value = json["excludedApps"] as? [String] { excludedApps = value }
     }
@@ -57,6 +61,7 @@ struct Config {
             "hotkey": hotkey,
             "maxItems": maxItems,
             "maxImageBytes": maxImageBytes,
+            "maxTextBytes": maxTextBytes,
             "pollIntervalMs": pollIntervalMs,
             "excludedApps": excludedApps,
         ]
