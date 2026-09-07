@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "Clippet",
             path: "Sources/Clippet"
-        )
+        ),
+        .testTarget(
+            name: "ClippetTests",
+            dependencies: ["Clippet"],
+            path: "Tests/ClippetTests"
+        ),
     ]
 )

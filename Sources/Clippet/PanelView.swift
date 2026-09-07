@@ -16,7 +16,7 @@ struct PanelView: View {
             Divider()
             footer
         }
-        .frame(width: 680, height: 440)
+        .frame(width: PanelLayout.size.width, height: PanelLayout.size.height)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.quaternary))
         .onAppear { searchFocused = true }
@@ -58,10 +58,12 @@ struct PanelView: View {
             emptyState
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            // Resolved once per render; rows only compare ids.
+            let selected = store.selectedItem
             HStack(spacing: 0) {
-                itemList.frame(width: 312)
+                itemList(selectedID: selected?.id).frame(width: PanelLayout.listWidth)
                 Divider()
-                PreviewPane(store: store, item: store.selectedItem)
+                PreviewPane(store: store, item: selected)
             }
         }
     }
@@ -90,20 +92,20 @@ struct PanelView: View {
 
     // MARK: - Item list
 
-    private var itemList: some View {
+    private func itemList(selectedID: Int64?) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if !store.pinnedFiltered.isEmpty {
                         sectionHeader("PINNED")
                         ForEach(store.pinnedFiltered) { item in
-                            row(item)
+                            row(item, selected: item.id == selectedID)
                         }
                     }
                     if !store.recentFiltered.isEmpty {
                         sectionHeader("HISTORY")
                         ForEach(store.recentFiltered) { item in
-                            row(item)
+                            row(item, selected: item.id == selectedID)
                         }
                     }
                 }
@@ -125,9 +127,8 @@ struct PanelView: View {
             .padding(.bottom, 3)
     }
 
-    private func row(_ item: ClipItem) -> some View {
-        let selected = store.selectedItem?.id == item.id
-        return HStack(spacing: 9) {
+    private func row(_ item: ClipItem, selected: Bool) -> some View {
+        HStack(spacing: 9) {
             rowIcon(item, selected: selected)
                 .frame(width: 26, height: 20)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))

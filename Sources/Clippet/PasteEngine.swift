@@ -6,8 +6,10 @@ import Carbon.HIToolbox
 final class PasteEngine: NSObject {
     /// The last frontmost app that is not Clippet itself — the paste target.
     private var targetApp: NSRunningApplication?
+    private let pasteboard: NSPasteboard
 
-    override init() {
+    init(pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
         super.init()
         targetApp = NSWorkspace.shared.frontmostApplication
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -24,8 +26,10 @@ final class PasteEngine: NSObject {
         targetApp = app
     }
 
+    /// Every write is tagged with `.clippetOrigin`; the watcher skips tagged changes because
+    /// the store already bumps the item itself, and re-capturing a pasted image would decode,
+    /// re-encode and re-thumbnail it for nothing.
     func write(_ item: ClipItem, imageData: Data?) {
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         switch item.kind {
         case .text:
@@ -37,6 +41,7 @@ final class PasteEngine: NSObject {
         case .file:
             pasteboard.writeObjects(item.fileURLs as [NSURL])
         }
+        pasteboard.setData(Data("1".utf8), forType: .clippetOrigin)
     }
 
     func paste(_ item: ClipItem, imageData: Data?) {

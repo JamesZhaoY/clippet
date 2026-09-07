@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
 
         config = Config.load()
-        db = Database(url: Config.directory.appendingPathComponent("clippet.sqlite3"))
+        db = openDatabase()
         store = ClipStore(config: config, db: db)
         engine = PasteEngine()
 
@@ -33,8 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         hotKey = HotKey(spec: config.hotkey) { [weak self] in self?.panel.toggle() }
-        if hotKey == nil, config.hotkey != "cmd+shift+v" {
-            hotKey = HotKey(spec: "cmd+shift+v") { [weak self] in self?.panel.toggle() }
+        if hotKey == nil, config.hotkey != Config.defaultHotkey {
+            hotKey = HotKey(spec: Config.defaultHotkey) { [weak self] in self?.panel.toggle() }
         }
 
         buildMainMenu()
@@ -48,6 +48,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        db?.close()
+    }
+
+    /// A database that cannot be opened must not turn into a silent, history-less session:
+    /// say so, then fall back to an in-memory store so the panel still works until quit.
+    private func openDatabase() -> Database {
+        let url = Config.directory.appendingPathComponent("clippet.sqlite3")
+        do {
+            return try Database(url: url)
+        } catch {
+            NSLog("Clippet: \(error)")
+            let alert = NSAlert()
+            alert.messageText = "Clippet can't open its history database"
+            alert.informativeText = """
+            \(error)
+
+            History will not be saved during this session. Check the permissions of \
+            \(Config.directory.path), or move the file away to start fresh.
+            """
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Continue Without Saving")
+            NSApp.activate()
+            alert.runModal()
+            // ":memory:" cannot fail to open.
+            return try! Database(path: ":memory:")
+        }
     }
 
     private func deliver(_ item: ClipItem, simulatePaste: Bool) {

@@ -19,6 +19,25 @@ struct ClipItem: Identifiable {
     var thumbnail: Data?
     var imageWidth: Int
     var imageHeight: Int
+    /// Lowercased `text`, computed once so filtering does not re-fold every item per keystroke.
+    let searchKey: String
+
+    init(id: Int64, kind: ClipKind, hash: String, text: String, pinned: Bool,
+         createdAt: Date, lastUsedAt: Date, appBundleID: String?,
+         thumbnail: Data?, imageWidth: Int, imageHeight: Int) {
+        self.id = id
+        self.kind = kind
+        self.hash = hash
+        self.text = text
+        self.pinned = pinned
+        self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
+        self.appBundleID = appBundleID
+        self.thumbnail = thumbnail
+        self.imageWidth = imageWidth
+        self.imageHeight = imageHeight
+        self.searchKey = kind == .image ? "" : text.lowercased()
+    }
 
     var fileURLs: [URL] {
         guard kind == .file else { return [] }

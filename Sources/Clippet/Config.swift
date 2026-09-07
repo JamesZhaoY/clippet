@@ -1,15 +1,22 @@
 import Foundation
 
 struct Config {
-    var hotkey = "cmd+shift+v"
+    var hotkey = Config.defaultHotkey
     var maxItems = 500
     var maxImageBytes = 10 * 1024 * 1024
     var pollIntervalMs = 300
     /// Reserved for v2; not enforced yet.
     var excludedApps: [String] = []
 
+    static let defaultHotkey = "cmd+shift+v"
+
+    /// `CLIPPET_DATA_DIR` relocates config and database, so a test build can run next to the
+    /// installed app without touching its history.
     static var directory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let override = ProcessInfo.processInfo.environment["CLIPPET_DATA_DIR"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Clippet", isDirectory: true)
     }
 
@@ -18,25 +25,32 @@ struct Config {
     }
 
     /// Missing file: defaults are written out so the user has something to edit.
-    /// Missing keys fall back to defaults so a partial file stays valid.
     static func load() -> Config {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var config = Config()
         guard let data = try? Data(contentsOf: fileURL) else {
+            let config = Config()
             config.writeDefaultFile()
             return config
         }
         guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             NSLog("Clippet: config.json is not valid JSON, using defaults")
-            return config
+            return Config()
         }
-        if let value = json["hotkey"] as? String { config.hotkey = value }
-        if let value = json["maxItems"] as? Int { config.maxItems = value }
-        if let value = json["maxImageBytes"] as? Int { config.maxImageBytes = value }
-        if let value = json["pollIntervalMs"] as? Int { config.pollIntervalMs = value }
-        if let value = json["excludedApps"] as? [String] { config.excludedApps = value }
-        return config
+        return Config(json: json)
     }
+
+    /// Missing keys fall back to defaults so a partial file stays valid; out-of-range values
+    /// are clamped so a typo cannot switch eviction off or spin the poller.
+    init(json: [String: Any]) {
+        self.init()
+        if let value = json["hotkey"] as? String, !value.isEmpty { hotkey = value }
+        if let value = json["maxItems"] as? Int { maxItems = value.clamped(to: 1...100_000) }
+        if let value = json["maxImageBytes"] as? Int { maxImageBytes = max(0, value) }
+        if let value = json["pollIntervalMs"] as? Int { pollIntervalMs = value.clamped(to: 50...5_000) }
+        if let value = json["excludedApps"] as? [String] { excludedApps = value }
+    }
+
+    init() {}
 
     private func writeDefaultFile() {
         let json: [String: Any] = [
@@ -49,5 +63,11 @@ struct Config {
         guard let data = try? JSONSerialization.data(withJSONObject: json,
                                                      options: [.prettyPrinted, .sortedKeys]) else { return }
         try? data.write(to: Config.fileURL)
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
     }
 }

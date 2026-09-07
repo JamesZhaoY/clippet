@@ -2,6 +2,11 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 
+enum PanelLayout {
+    static let size = NSSize(width: 680, height: 440)
+    static let listWidth: CGFloat = 312
+}
+
 /// Borderless nonactivating panels refuse key status unless this is overridden.
 final class ClippetPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -16,12 +21,10 @@ final class PanelController: NSObject, NSWindowDelegate {
     private let panel: ClippetPanel
     private var keyMonitor: Any?
 
-    private static let panelSize = NSSize(width: 680, height: 440)
-
     init(store: ClipStore) {
         self.store = store
         panel = ClippetPanel(
-            contentRect: NSRect(origin: .zero, size: Self.panelSize),
+            contentRect: NSRect(origin: .zero, size: PanelLayout.size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
@@ -43,7 +46,7 @@ final class PanelController: NSObject, NSWindowDelegate {
             onPaste: { [weak self] item in self?.paste(item) },
             onCopyOnly: { [weak self] item in self?.copyOnly(item) }
         ))
-        host.frame = NSRect(origin: .zero, size: Self.panelSize)
+        host.frame = NSRect(origin: .zero, size: PanelLayout.size)
         panel.contentView = host
     }
 
@@ -56,8 +59,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     func show() {
         let frame = targetScreen().visibleFrame
         panel.setFrameOrigin(NSPoint(
-            x: frame.midX - Self.panelSize.width / 2,
-            y: frame.minY + frame.height * 0.62 - Self.panelSize.height / 2
+            x: frame.midX - PanelLayout.size.width / 2,
+            y: frame.minY + frame.height * 0.62 - PanelLayout.size.height / 2
         ))
         store.query = ""
         store.resetSelection()

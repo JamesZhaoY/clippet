@@ -71,8 +71,40 @@ cat > "$CONTENTS/Info.plist" <<EOF
 </plist>
 EOF
 
-echo "==> Ad-hoc signing"
-codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
+# Signing identity. Accessibility permission is bound to the app's designated requirement:
+# with an ad-hoc signature that is the binary's hash, so every rebuild loses the grant.
+# Any real certificate (Apple Development from Xcode, or a self-signed "Code Signing"
+# certificate from Keychain Access) keeps it stable across rebuilds.
+pick_identity() {
+  if [[ -n "${CLIPPET_SIGN_IDENTITY:-}" ]]; then
+    echo "$CLIPPET_SIGN_IDENTITY"
+    return
+  fi
+  local identities
+  identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  local kind
+  for kind in "Developer ID Application" "Apple Development" "Mac Developer" "Clippet"; do
+    local hash
+    hash="$(printf '%s\n' "$identities" | grep -F "\"$kind" | head -n1 | awk '{print $2}')"
+    if [[ -n "$hash" ]]; then
+      echo "$hash"
+      return
+    fi
+  done
+}
+
+IDENTITY="$(pick_identity)"
+if [[ -n "$IDENTITY" ]]; then
+  echo "==> Signing with identity $IDENTITY"
+  codesign --force --sign "$IDENTITY" --identifier "$BUNDLE_ID" "$APP_DIR"
+else
+  echo "==> No code-signing identity found, signing ad-hoc"
+  echo "    (Accessibility permission will need re-granting after every rebuild;"
+  echo "     create a Code Signing certificate in Keychain Access to avoid that)"
+  codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
+fi
+codesign --verify --deep --strict "$APP_DIR"
+echo "    $(codesign -d -r- "$APP_DIR" 2>&1 | grep designated)"
 
 echo "==> Done: $APP_DIR"
-echo "    Install with: cp -R \"$APP_DIR\" /Applications/"
+echo "    Install with: bash Scripts/install.sh"
