@@ -82,6 +82,33 @@ final class ClipStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testClearUnpinnedRemovesItemsOutsideSearchAndIgnoresPendingCaptures() {
+        let store = makeStore()
+        store.handle(textCapture("pinned"))
+        store.togglePin(store.items[0])
+        store.handle(textCapture("hidden"))
+        store.handle(textCapture("matching"))
+        let pendingImage = imageCapture(makePNG(width: 8, height: 8))
+        store.query = "matching"
+
+        XCTAssertTrue(store.hasUnpinnedItems)
+        XCTAssertTrue(store.clearUnpinned())
+        XCTAssertFalse(store.hasUnpinnedItems)
+        XCTAssertEqual(store.query, "")
+        XCTAssertEqual(store.visibleItems.map(\.text), ["pinned"])
+        XCTAssertEqual(store.selectedID, store.visibleItems.first?.id)
+
+        store.handle(pendingImage)
+        XCTAssertEqual(store.items.map(\.text), ["pinned"])
+        assertMatchesDisk(store)
+
+        store.handle(textCapture("new copy", at: Date() + 1))
+        XCTAssertTrue(store.hasUnpinnedItems)
+        XCTAssertEqual(store.items.map(\.text), ["new copy", "pinned"])
+        assertMatchesDisk(store)
+    }
+
+    @MainActor
     func testFilterIsCaseInsensitiveAndHidesImagesWhileSearching() {
         let store = makeStore()
         store.handle(textCapture("Hello World"))

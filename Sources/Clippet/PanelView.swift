@@ -7,6 +7,7 @@ struct PanelView: View {
     let onCopyOnly: (ClipItem) -> Void
     @FocusState private var searchFocused: Bool
     @State private var hoveredID: Int64?
+    @State private var cleanupFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +22,11 @@ struct PanelView: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.quaternary))
         .onAppear { searchFocused = true }
         .onChange(of: store.focusToken) { searchFocused = true }
+        .alert("Couldn’t Clear History", isPresented: $cleanupFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Clippet couldn’t delete the unpinned items. Please try again.")
+        }
     }
 
     // MARK: - Search bar
@@ -240,6 +246,14 @@ struct PanelView: View {
             Text("\(store.visibleItems.count) item\(store.visibleItems.count == 1 ? "" : "s")")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
+            Button {
+                cleanupFailed = !store.clearUnpinned()
+            } label: {
+                Label("Clear Unpinned", systemImage: "trash")
+            }
+            .controlSize(.small)
+            .disabled(!store.hasUnpinnedItems)
+            .help("Delete all unpinned history items, including those outside the search results.")
         }
         .padding(.horizontal, 12)
         .frame(height: 28)

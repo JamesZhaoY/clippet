@@ -200,6 +200,12 @@ final class Database {
         reclaimSpace()
     }
 
+    func clearUnpinned() -> Bool {
+        guard exec("DELETE FROM items WHERE pinned = 0;") else { return false }
+        reclaimSpace()
+        return true
+    }
+
     /// Deletes the oldest unpinned items until the total row count is back under `cap` and
     /// returns their ids. Pinned items never count as eviction candidates, so the total can
     /// exceed `cap` when more than `cap` items are pinned.
@@ -272,11 +278,14 @@ final class Database {
         return true
     }
 
-    private func exec(_ sql: String) {
+    @discardableResult
+    private func exec(_ sql: String) -> Bool {
         var error: UnsafeMutablePointer<CChar>?
-        if sqlite3_exec(db, sql, nil, nil, &error) != SQLITE_OK, let error {
+        let status = sqlite3_exec(db, sql, nil, nil, &error)
+        if let error {
             Log.database.error("sqlite error: \(String(cString: error), privacy: .public) — \(sql, privacy: .public)")
             sqlite3_free(error)
         }
+        return status == SQLITE_OK
     }
 }

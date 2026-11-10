@@ -28,6 +28,7 @@ final class ClipStore: ObservableObject {
 
     let config: Config
     private let db: Database
+    private var lastCleanupAt = Date.distantPast
 
     init(config: Config, db: Database) {
         self.config = config
@@ -74,6 +75,8 @@ final class ClipStore: ObservableObject {
 
     func handle(_ capture: PasteboardCapture) {
         let now = capture.capturedAt
+        // Image processing can finish after a cleanup has removed earlier copies.
+        guard now > lastCleanupAt else { return }
         guard let result = db.upsert(kind: capture.kind,
                                      hash: capture.hash,
                                      text: capture.text,
@@ -145,6 +148,19 @@ final class ClipStore: ObservableObject {
         db.clearAll()
         items = []
         selectedID = nil
+    }
+
+    var hasUnpinnedItems: Bool {
+        items.contains { !$0.pinned }
+    }
+
+    func clearUnpinned() -> Bool {
+        let cleanupAt = Date()
+        guard db.clearUnpinned() else { return false }
+        lastCleanupAt = cleanupAt
+        items.removeAll { !$0.pinned }
+        query = ""
+        return true
     }
 
     func touch(_ item: ClipItem) {
